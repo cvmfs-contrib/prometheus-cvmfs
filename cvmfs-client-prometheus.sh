@@ -1,6 +1,7 @@
 #!/bin/bash -u
 
 HTTP_HEADER='FALSE'
+USE_NON_STANDARD_MOUNTPOINTS='FALSE'
 
 TMPFILE=$(mktemp)
 
@@ -27,12 +28,15 @@ declare -A CVMFS_EXTENDED_ATTRIBUTE_GAUGES=(
 
 #############################################################
 usage() {
-    echo "Usage: $0 [-h|--help] [--http]" >&2
+    echo "Usage: $0 [-h|--help] [--http] [--non-standard-mountpoints]" >&2
     echo '' >&2
     echo '  --http: add the HTTP protocol header to the output' >&2
+    echo '  --non-standard-mountpoints: use cvmfs_config status instead of findmnt to discover repositories' >&2
     echo '' >&2
     echo 'NOTE: The user running this script must have read access' >&2
     echo '      to the CVMFS cache files!' >&2
+    echo 'NOTE: By default, repositories are discovered using findmnt to find fuse filesystems' >&2
+    echo '      mounted under /cvmfs. Use --non-standard-mountpoints for non-standard setups.' >&2
     exit 1
 }
 
@@ -187,8 +191,12 @@ get_cvmfs_repo_metrics() {
     local cvmfs_repo_expires_min
     cvmfs_repo_expires_min=$(attr -g expires "${repomountpoint}" | tail -n +2)
     local cvmfs_repo_expires
-    cvmfs_repo_expires=$((cvmfs_repo_expires_min * 60))
-    generate_metric 'cvmfs_repo_expires_seconds' 'gauge' 'Shows the remaining life time of the mounted root file catalog in seconds.' "repo=\"${fqrn}\"" "${cvmfs_repo_expires}"
+    if case $cvmfs_repo_expires_min in never*) ;; *) false;; esac; then
+      cvmfs_repo_expires="-1"
+    else
+      cvmfs_repo_expires=$((cvmfs_repo_expires_min * 60))
+    fi
+    generate_metric 'cvmfs_repo_expires_seconds' 'gauge' 'Shows the remaining life time of the mounted root file catalog in seconds. -1 if never expires.' "repo=\"${fqrn}\"" "${cvmfs_repo_expires}"
 
     local cvmfs_mount_ndownload
     cvmfs_mount_ndownload=$(attr -g ndownload "${repomountpoint}" | tail -n +2)
@@ -234,6 +242,63 @@ get_cvmfs_repo_metrics() {
     get_cvmfs_repo_proxy_metrics "${reponame}"
 }
 
+get_cvmfs_repo_metrics_new() {
+    local reponame
+    reponame="$1"
+
+    local repomountpoint
+    repomountpoint=$(mountpoint_for_cvmfs_repo "${reponame}")
+
+    # Use the new "metrics prometheus" command to get most metrics
+    cvmfs_talk -i "${reponame}" "metrics prometheus" >> "${TMPFILE}"
+
+    # Still need to get maxfd via xattr since it was removed from metrics prometheus
+    local maxfd_value
+    maxfd_value=$(attr -g maxfd "${repomountpoint}" | tail -n +2)
+    local fqrn
+    fqrn=$(fqrn_for_cvmfs_repo "${reponame}")
+    generate_metric 'cvmfs_maxfd' 'gauge' 'Shows the maximum number of file descriptors available to file system clients.' "repo=\"${fqrn}\"" "${maxfd_value}"
+}
+
+get_repos_from_findmnt() {
+    # Parse findmnt output to find fuse filesystems mounted under /cvmfs
+    findmnt -o FSTYPE,TARGET --raw | \
+    awk '$1 == "fuse" && $2 ~ /^\/cvmfs\// { gsub(/^\/cvmfs\//, "", $2); print $2 }' | \
+    tr '\n' ' '
+}
+
+get_repos_from_cvmfs_config() {
+    cvmfs_config status | cut -d ' ' -f 1 | tr '\n' ' '
+}
+
+check_cvmfs_version() {
+    # Check if cvmfs2 version is >= 2.13.2
+    local version_output
+    version_output=$(cvmfs2 --version 2>/dev/null | head -n 1)
+    if [ $? -ne 0 ]; then
+        # cvmfs2 command not found, assume old version
+        return 1
+    fi
+
+    local version
+    version=$(echo "$version_output" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -n 1)
+    if [ -z "$version" ]; then
+        # Could not parse version, assume old version
+        return 1
+    fi
+
+    # Convert version to comparable format (e.g., 2.13.2 -> 20130200)
+    local major minor patch
+    major=$(echo "$version" | cut -d. -f1)
+    minor=$(echo "$version" | cut -d. -f2)
+    patch=$(echo "$version" | cut -d. -f3)
+
+    local version_num=$((major * 10000000 + minor * 100000 + patch * 1000))
+    local min_version_num=$((2 * 10000000 + 13 * 100000 + 2 * 1000))  # 2.13.2
+
+    [ $version_num -ge $min_version_num ]
+}
+
 #############################################################
 # List "uncommon" commands we expect
 for cmd in attr bc cvmfs_config cvmfs_talk grep; do
@@ -246,7 +311,7 @@ done
 #############################################################
 # setup args in the right order for making getopt evaluation
 # nice and easy.  You'll need to read the manpages for more info
-args=$(getopt --options 'h' --longoptions 'help,http' -- "$@")
+args=$(getopt --options 'h' --longoptions 'help,http,non-standard-mountpoints' -- "$@")
 eval set -- "$args"
 
 for arg in $@; do
@@ -261,6 +326,11 @@ for arg in $@; do
         HTTP_HEADER='TRUE'
         shift
         ;;
+    --non-standard-mountpoints)
+        # Use cvmfs_config status to discover repositories
+        USE_NON_STANDARD_MOUNTPOINTS='TRUE'
+        shift
+        ;;
     -h | --help)
         # get help
         shift
@@ -271,8 +341,24 @@ done
 
 CLOCK_TICK=$(getconf CLK_TCK)
 
-for REPO in $(cvmfs_config status | cut -d ' ' -f 1); do
-    get_cvmfs_repo_metrics "${REPO}"
+# Determine which method to use for getting metrics
+if check_cvmfs_version; then
+    # CVMFS version >= 2.13.2, use new metrics prometheus command
+    METRICS_FUNCTION="get_cvmfs_repo_metrics_new"
+else
+    # Older CVMFS version, use legacy method
+    METRICS_FUNCTION="get_cvmfs_repo_metrics"
+fi
+
+# Get repository list based on selected method
+if [[ "${USE_NON_STANDARD_MOUNTPOINTS}" == 'TRUE' ]]; then
+    REPO_LIST=$(get_repos_from_cvmfs_config)
+else
+    REPO_LIST=$(get_repos_from_findmnt)
+fi
+
+for REPO in $REPO_LIST; do
+    $METRICS_FUNCTION "${REPO}"
 done
 
 if [[ "${HTTP_HEADER}" == 'TRUE' ]]; then
