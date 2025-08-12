@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        # Stop and disable services before removal
+        if [ -d /run/systemd/system ]; then
+            systemctl stop cvmfs-client-prometheus@*.service >/dev/null 2>&1 || true
+            systemctl stop cvmfs-client-prometheus.socket >/dev/null 2>&1 || true
+            systemctl disable cvmfs-client-prometheus@.service >/dev/null 2>&1 || true
+            systemctl disable cvmfs-client-prometheus.socket >/dev/null 2>&1 || true
+        fi
+        ;;
+    failed-upgrade)
+        ;;
+    *)
+        echo "prerm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

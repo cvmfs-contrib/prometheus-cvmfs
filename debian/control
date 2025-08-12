@@ -1,0 +1,37 @@
+Source: prometheus-cvmfs-exporter
+Section: admin
+Priority: optional
+Maintainer: Package Maintainer <maintainer@example.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.0
+Homepage: https://github.com/cvmfs-contrib/prometheus-cvmfs
+Vcs-Git: https://github.com/cvmfs-contrib/prometheus-cvmfs.git
+Vcs-Browser: https://github.com/cvmfs-contrib/prometheus-cvmfs
+
+Package: prometheus-cvmfs-exporter
+Architecture: all
+Depends: ${misc:Depends},
+         bash,
+         attr,
+         bc,
+         cvmfs,
+         findutils,
+         grep,
+         coreutils,
+         util-linux,
+         systemd
+Description: Prometheus exporter for CVMFS client monitoring
+ A Prometheus exporter for monitoring CVMFS (CernVM File System) clients.
+ This package provides a script that collects metrics from CVMFS repositories
+ and exposes them in Prometheus format, along with systemd service files
+ for running the exporter as a service.
+ .
+ The exporter collects various metrics including:
+  - Cache hit rates and sizes
+  - Download statistics
+  - Repository status and configuration
+  - Proxy usage and performance
+  - System resource usage by CVMFS processes
+ .
+ The package supports both legacy and modern CVMFS versions (>= 2.13.2)
+ and provides configurable repository discovery methods.

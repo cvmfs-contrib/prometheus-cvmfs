@@ -1,0 +1,17 @@
+prometheus-cvmfs-exporter (1.0.0-1) unstable; urgency=medium
+
+  * Initial release of prometheus-cvmfs-exporter
+  * Prometheus exporter for CVMFS client monitoring
+  * Includes systemd service and socket files for service management
+  * Supports both legacy and modern CVMFS versions (>= 2.13.2)
+  * Configurable repository discovery methods (findmnt vs cvmfs_config)
+  * Comprehensive metrics collection including:
+    - Cache hit rates and sizes
+    - Download statistics and performance
+    - Repository status and configuration
+    - Proxy usage and performance metrics
+    - System resource usage by CVMFS processes
+  * HTTP header support for direct web serving
+  * Secure systemd service configuration with resource limits
+
+ -- Package Maintainer <maintainer@example.com>  Mon, 01 Jan 2024 12:00:00 +0000

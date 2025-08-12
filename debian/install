@@ -1,0 +1,2 @@
+systemd/cvmfs-client-prometheus@.service usr/lib/systemd/system/
+systemd/cvmfs-client-prometheus.socket usr/lib/systemd/system/

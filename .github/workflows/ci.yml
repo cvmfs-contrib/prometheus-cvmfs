@@ -1,0 +1,308 @@
+name: CI - Test prometheus-cvmfs-exporter
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test-debian-ubuntu:
+    name: Test DEB Package on Ubuntu
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup CernVM-FS
+      uses: cvmfs-contrib/github-action-cvmfs@v4
+      with:
+        cvmfs_repositories: 'sft.cern.ch,sw.hsf.org'
+        cvmfs_http_proxy: 'DIRECT'
+        
+    - name: Verify CVMFS is working
+      run: |
+        echo "Testing CVMFS access..."
+        ls -la /cvmfs/
+        timeout 30 ls /cvmfs/sft.cern.ch/ || echo "CVMFS access test completed"
+        
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          debhelper \
+          devscripts \
+          dpkg-dev \
+          systemd \
+          curl \
+          attr \
+          bc
+          
+    - name: Build DEB package
+      run: |
+        echo "Building DEB package..."
+        make clean
+        make deb
+        
+    - name: Verify DEB package contents
+      run: |
+        echo "Checking DEB package contents..."
+        dpkg -c build/prometheus-cvmfs-exporter_*.deb
+        dpkg -I build/prometheus-cvmfs-exporter_*.deb
+        
+    - name: Install DEB package
+      run: |
+        echo "Installing DEB package..."
+        sudo dpkg -i build/prometheus-cvmfs-exporter_*.deb || true
+        sudo apt-get install -f -y
+        
+    - name: Verify installation
+      run: |
+        echo "Verifying installation..."
+        ls -la /usr/libexec/cvmfs/cvmfs-prometheus.sh
+        ls -la /usr/lib/systemd/system/cvmfs-client-prometheus*
+        
+    - name: Test script functionality
+      run: |
+        echo "Testing script functionality..."
+        # Test script help
+        /usr/libexec/cvmfs/cvmfs-prometheus.sh --help || true
+        
+        # Test script execution (may fail without proper CVMFS setup, but should not crash)
+        timeout 10 /usr/libexec/cvmfs/cvmfs-prometheus.sh || echo "Script execution test completed"
+        
+    - name: Start systemd services
+      run: |
+        echo "Starting systemd services..."
+        sudo systemctl daemon-reload
+        sudo systemctl enable cvmfs-client-prometheus.socket
+        sudo systemctl start cvmfs-client-prometheus.socket
+        sudo systemctl status cvmfs-client-prometheus.socket --no-pager
+        
+    - name: Test metrics endpoint
+      run: |
+        echo "Testing metrics endpoint..."
+        # Wait for socket to be ready
+        sleep 5
+        
+        # Test the metrics endpoint with timeout and timing
+        echo "Attempting to connect to localhost:9868..."
+        start_time=$(date +%s.%N)
+        
+        # Use curl with timeout and proper error handling
+        if timeout 30 curl -f -s http://localhost:9868 > metrics_output.txt; then
+          end_time=$(date +%s.%N)
+          response_time=$(echo "$end_time - $start_time" | bc)
+          echo "✅ Metrics endpoint responded successfully in ${response_time} seconds"
+          
+          # Verify Prometheus metrics format
+          if grep -q "^# HELP" metrics_output.txt && grep -q "^# TYPE" metrics_output.txt; then
+            echo "✅ Response contains valid Prometheus metrics format"
+            echo "Sample metrics:"
+            head -20 metrics_output.txt
+          else
+            echo "❌ Response does not contain valid Prometheus metrics"
+            echo "Response content:"
+            cat metrics_output.txt
+            exit 1
+          fi
+        else
+          echo "❌ Failed to connect to metrics endpoint"
+          echo "Checking service status..."
+          sudo systemctl status cvmfs-client-prometheus.socket --no-pager || true
+          sudo journalctl -u cvmfs-client-prometheus.socket --no-pager -n 20 || true
+          exit 1
+        fi
+        
+    - name: Upload DEB package artifact
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: deb-package
+        path: build/prometheus-cvmfs-exporter_*.deb
+        retention-days: 7
+
+  test-rpm-almalinux:
+    name: Test RPM Package on AlmaLinux
+    runs-on: ubuntu-latest
+
+    services:
+      almalinux:
+        image: almalinux:9
+        options: >-
+          --privileged
+          --cgroupns=host
+        volumes:
+          - /sys/fs/cgroup:/sys/fs/cgroup:rw
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup AlmaLinux container with systemd
+      run: |
+        # Create a container with systemd support
+        docker run -d \
+          --name almalinux-test \
+          --privileged \
+          --cgroupns=host \
+          -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+          -v $PWD:/workspace \
+          -w /workspace \
+          almalinux:9 \
+          /usr/sbin/init
+
+        # Wait for container to be ready
+        sleep 5
+
+        # Verify container is running
+        docker ps
+
+    - name: Install dependencies in container
+      run: |
+        docker exec almalinux-test bash -c "
+          # Install EPEL and basic tools
+          dnf install -y epel-release
+          dnf update -y
+
+          # Install CVMFS
+          dnf install -y https://ecsft.cern.ch/dist/cvmfs/cvmfs-release/cvmfs-release-latest.noarch.rpm
+          dnf install -y cvmfs cvmfs-config-default
+
+          # Install build tools and dependencies
+          dnf install -y  --allowerasing \
+            rpm-build \
+            make \
+            systemd \
+            curl \
+            attr \
+            bc \
+            findutils \
+            grep \
+            coreutils \
+            util-linux
+        "
+
+    - name: Setup CVMFS in container
+      run: |
+        docker exec almalinux-test bash -c "
+          # Configure CVMFS
+          echo 'CVMFS_REPOSITORIES=sft.cern.ch,sw.hsf.org' > /etc/cvmfs/default.local
+          echo 'CVMFS_HTTP_PROXY=DIRECT' >> /etc/cvmfs/default.local
+          echo 'CVMFS_CLIENT_PROFILE=single' >> /etc/cvmfs/default.local
+          echo 'CVMFS_USE_CDN=yes' >> /etc/cvmfs/default.local
+
+          # Setup CVMFS
+          cvmfs_config setup
+
+          # Test CVMFS access
+          timeout 30 ls /cvmfs/sft.cern.ch/ || echo 'CVMFS access test completed'
+        "
+
+    - name: Build RPM package in container
+      run: |
+        docker exec almalinux-test bash -c "
+          cd /workspace
+          echo 'Building RPM package...'
+          make clean
+          make rpm
+        "
+
+    - name: Verify RPM package contents
+      run: |
+        docker exec almalinux-test bash -c "
+          cd /workspace
+          echo 'Checking RPM package contents...'
+          rpm -qlp build/rpm/RPMS/noarch/prometheus-cvmfs-exporter-*.rpm
+          rpm -qip build/rpm/RPMS/noarch/prometheus-cvmfs-exporter-*.rpm
+        "
+
+    - name: Install RPM package in container
+      run: |
+        docker exec almalinux-test bash -c "
+          cd /workspace
+          echo 'Installing RPM package...'
+          rpm -ivh build/rpm/RPMS/noarch/prometheus-cvmfs-exporter-*.rpm
+        "
+
+    - name: Verify installation in container
+      run: |
+        docker exec almalinux-test bash -c "
+          echo 'Verifying installation...'
+          ls -la /usr/libexec/cvmfs/cvmfs-prometheus.sh
+          ls -la /usr/lib/systemd/system/cvmfs-client-prometheus*
+        "
+
+    - name: Test script functionality in container
+      run: |
+        docker exec almalinux-test bash -c "
+          echo 'Testing script functionality...'
+          # Test script help
+          /usr/libexec/cvmfs/cvmfs-prometheus.sh --help || true
+
+          # Test script execution (may fail without proper CVMFS setup, but should not crash)
+          timeout 10 /usr/libexec/cvmfs/cvmfs-prometheus.sh || echo 'Script execution test completed'
+        "
+
+    - name: Start systemd services in container
+      run: |
+        docker exec almalinux-test bash -c "
+          echo 'Starting systemd services...'
+          systemctl daemon-reload
+          systemctl enable cvmfs-client-prometheus.socket
+          systemctl start cvmfs-client-prometheus.socket
+          systemctl status cvmfs-client-prometheus.socket --no-pager
+        "
+
+    - name: Test metrics endpoint in container
+      run: |
+        docker exec almalinux-test bash -c "
+          echo 'Testing metrics endpoint...'
+          # Wait for socket to be ready
+          sleep 5
+
+          # Test the metrics endpoint with timeout and timing
+          echo 'Attempting to connect to localhost:9868...'
+          start_time=\$(date +%s.%N)
+
+          # Use curl with timeout and proper error handling
+          if timeout 30 curl -f -s http://localhost:9868 > metrics_output.txt; then
+            end_time=\$(date +%s.%N)
+            response_time=\$(echo \"\$end_time - \$start_time\" | bc)
+            echo \"✅ Metrics endpoint responded successfully in \${response_time} seconds\"
+
+            # Verify Prometheus metrics format
+            if grep -q \"^# HELP\" metrics_output.txt && grep -q \"^# TYPE\" metrics_output.txt; then
+              echo \"✅ Response contains valid Prometheus metrics format\"
+              echo \"Sample metrics:\"
+              head -20 metrics_output.txt
+            else
+              echo \"❌ Response does not contain valid Prometheus metrics\"
+              echo \"Response content:\"
+              cat metrics_output.txt
+              exit 1
+            fi
+          else
+            echo \"❌ Failed to connect to metrics endpoint\"
+            echo \"Checking service status...\"
+            systemctl status cvmfs-client-prometheus.socket --no-pager || true
+            journalctl -u cvmfs-client-prometheus.socket --no-pager -n 20 || true
+            exit 1
+          fi
+        "
+
+    - name: Cleanup container
+      if: always()
+      run: |
+        docker stop almalinux-test || true
+        docker rm almalinux-test || true
+
+    - name: Upload RPM package artifact
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: rpm-package
+        path: build/rpm/RPMS/noarch/prometheus-cvmfs-exporter-*.rpm
+        retention-days: 7
