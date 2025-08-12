@@ -1,7 +1,7 @@
 Source: prometheus-cvmfs-exporter
 Section: admin
 Priority: optional
-Maintainer: Package Maintainer <maintainer@example.com>
+Maintainer: Valentin Volkl <valentin.volkl@cern.ch>
 Build-Depends: debhelper-compat (= 13)
 Standards-Version: 4.6.0
 Homepage: https://github.com/cvmfs-contrib/prometheus-cvmfs

@@ -70,10 +70,5 @@ rm -f %{buildroot}%{_docdir}/%{name}/LICENSE
 %{_unitdir}/cvmfs-client-prometheus.socket
 
 %changelog
-* Mon Jan 01 2024 Package Maintainer <maintainer@example.com> - 1.0.0-1
+* Tue Aug 12 2025 Valentin Volkl <valentin.volkl@cern.ch> - 1.0.0-1
 - Initial package release
-- Prometheus exporter for CVMFS client monitoring
-- Includes systemd service and socket files
-- Supports both legacy and modern CVMFS versions (>= 2.13.2)
-- Configurable repository discovery methods
-- Comprehensive metrics collection including cache, download, and proxy stats
