@@ -237,6 +237,17 @@ get_cvmfs_repo_metrics() {
     generate_metric 'cvmfs_cpu_user_total' 'counter' 'CPU time used in userspace by CVMFS mount in seconds.' "repo=\"${fqrn}\"" "${cvmfs_user_seconds}"
     generate_metric 'cvmfs_cpu_system_total' 'counter' 'CPU time used in the kernel system calls by CVMFS mount in seconds.' "repo=\"${fqrn}\"" "${cvmfs_system_seconds}"
 
+    # Add memory usage metric
+    if [[ -f "/proc/${repo_pid}/status" ]]; then
+        local memory_usage_kb
+        memory_usage_kb=$(grep "VmRSS:" "/proc/${repo_pid}/status" | awk '{print $2}')
+        if [[ -n "${memory_usage_kb}" ]]; then
+            local memory_usage_bytes
+            memory_usage_bytes=$((memory_usage_kb * 1000))
+            generate_metric 'cvmfs_memory_usage_bytes' 'gauge' 'CVMFS process memory usage in bytes.' "repo=\"${fqrn}\"" "${memory_usage_bytes}"
+        fi
+    fi
+
     local cvmfs_mount_active_proxy
     cvmfs_mount_active_proxy=$(attr -g proxy "${repomountpoint}" | tail -n +2)
     generate_metric 'cvmfs_active_proxy' 'gauge' 'Shows the active proxy in use for this mount.' "repo=\"${fqrn}\",proxy=\"${cvmfs_mount_active_proxy}\"" 1
@@ -259,9 +270,20 @@ get_cvmfs_repo_metrics_new() {
     # Still need to get maxfd via xattr since it was removed from metrics prometheus
     local maxfd_value
     maxfd_value=$(attr -g maxfd "${repomountpoint}" | tail -n +2)
-    local fqrn
-    fqrn=$(fqrn_for_cvmfs_repo "${reponame}")
-    generate_metric 'cvmfs_maxfd' 'gauge' 'Shows the maximum number of file descriptors available to file system clients.' "repo=\"${fqrn}\"" "${maxfd_value}"
+    generate_metric 'cvmfs_maxfd' 'gauge' 'Shows the maximum number of file descriptors available to file system clients.' "repo=\"${reponame}\"" "${maxfd_value}"
+
+    # Extract PID from the metrics output and add memory usage metric
+    local repo_pid
+    repo_pid=$(grep "cvmfs_pid{repo=\"${reponame}\"}" "${TMPFILE}" | tail -n 1 | awk '{print $2}')
+    if [[ -n "${repo_pid}" && -f "/proc/${repo_pid}/status" ]]; then
+        local memory_usage_kb
+        memory_usage_kb=$(grep "VmRSS:" "/proc/${repo_pid}/status" | awk '{print $2}')
+        if [[ -n "${memory_usage_kb}" ]]; then
+            local memory_usage_bytes
+            memory_usage_bytes=$((memory_usage_kb * 1000))
+            generate_metric 'cvmfs_memory_usage_bytes' 'gauge' 'CVMFS process memory usage in bytes.' "repo=\"${reponame}\"" "${memory_usage_bytes}"
+        fi
+    fi
 }
 
 get_repos_from_findmnt() {
