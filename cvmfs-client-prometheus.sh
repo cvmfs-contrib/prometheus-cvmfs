@@ -54,6 +54,32 @@ ${metric_name}{${metric_labels}} ${metric_value}
 EOF
 }
 
+convert_version_to_numeric() {
+    local version="$1"
+    # Convert version string like "2.13.2.0" to numeric value
+    # Format: major * 10000 + minor * 100 + patch
+    # Example: 2.13.2 becomes 21302
+    # Ignore the build number (last field)
+
+    # Remove any non-numeric characters except dots
+    local clean_version
+    clean_version=$(echo "$version" | sed 's/[^0-9.]//g')
+
+    # Split version into components
+    IFS='.' read -ra version_parts <<< "$clean_version"
+
+    local major=${version_parts[0]:-0}
+    local minor=${version_parts[1]:-0}
+    local patch=${version_parts[2]:-0}
+    # Ignore build number (version_parts[3])
+
+    # Calculate numeric value: major * 10000 + minor * 100 + patch
+    local numeric_version
+    numeric_version=$((major * 10000 + minor * 100 + patch))
+
+    echo "$numeric_version"
+}
+
 list_mounted_cvmfs_repos() {
     cvmfs_config status | tr -s '[:space:]' | cut -d ' ' -f 1 | sort -u
 }
@@ -173,6 +199,13 @@ get_cvmfs_repo_metrics() {
     cvmfs_mount_revision=$(attr -g revision "${repomountpoint}" | tail -n +2)
     generate_metric 'cvmfs_repo' 'gauge' 'Shows the version of CVMFS used by this repository.' "repo=\"${fqrn}\",mountpoint=\"${repomountpoint}\",version=\"${cvmfs_mount_version}\",revision=\"${cvmfs_mount_revision}\"" 1
 
+    # Generate numeric version and revision metrics
+    local cvmfs_numeric_version
+    cvmfs_numeric_version=$(convert_version_to_numeric "${cvmfs_mount_version}")
+    generate_metric 'cvmfs_repo_version' 'gauge' 'CVMFS repository version as a numeric value for easier querying.' "repo=\"${fqrn}\"" "${cvmfs_numeric_version}"
+
+    generate_metric 'cvmfs_repo_revision' 'gauge' 'CVMFS repository revision number.' "repo=\"${fqrn}\"" "${cvmfs_mount_revision}"
+
     local cvmfs_mount_rx_kb
     cvmfs_mount_rx_kb=$(attr -g rx "${repomountpoint}" | tail -n +2)
     local cvmfs_mount_rx
@@ -271,6 +304,31 @@ get_cvmfs_repo_metrics_new() {
     local maxfd_value
     maxfd_value=$(attr -g maxfd "${repomountpoint}" | tail -n +2)
     generate_metric 'cvmfs_maxfd' 'gauge' 'Shows the maximum number of file descriptors available to file system clients.' "repo=\"${reponame}\"" "${maxfd_value}"
+
+    # Extract version and revision from the cvmfs_repo metric in TMPFILE and generate numeric metrics
+    local cvmfs_repo_line
+    cvmfs_repo_line=$(grep "cvmfs_repo{repo=\"${reponame}\"" "${TMPFILE}" | tail -n 1)
+
+    if [[ -n "${cvmfs_repo_line}" ]]; then
+        # Extract version from the metric line using regex
+        local cvmfs_mount_version
+        cvmfs_mount_version=$(echo "${cvmfs_repo_line}" | sed -n 's/.*version="\([^"]*\)".*/\1/p')
+
+        # Extract revision from the metric line using regex
+        local cvmfs_mount_revision
+        cvmfs_mount_revision=$(echo "${cvmfs_repo_line}" | sed -n 's/.*revision="\([^"]*\)".*/\1/p')
+
+        # Generate numeric version and revision metrics
+        if [[ -n "${cvmfs_mount_version}" ]]; then
+            local cvmfs_numeric_version
+            cvmfs_numeric_version=$(convert_version_to_numeric "${cvmfs_mount_version}")
+            generate_metric 'cvmfs_repo_version' 'gauge' 'CVMFS repository version as a numeric value for easier querying.' "repo=\"${reponame}\"" "${cvmfs_numeric_version}"
+        fi
+
+        if [[ -n "${cvmfs_mount_revision}" ]]; then
+            generate_metric 'cvmfs_repo_revision' 'gauge' 'CVMFS repository revision number.' "repo=\"${reponame}\"" "${cvmfs_mount_revision}"
+        fi
+    fi
 
     # Extract PID from the metrics output and add memory usage metric
     local repo_pid
