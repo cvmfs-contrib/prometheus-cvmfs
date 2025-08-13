@@ -68,7 +68,7 @@ uninstall:
 	@echo "Uninstall complete"
 
 # Package building targets
-package: rpm deb
+package: rpm deb deb-source
 
 rpm: $(BUILDDIR)/RPMS/noarch/$(PACKAGE_NAME)-$(VERSION)-$(RELEASE).noarch.rpm
 
@@ -92,12 +92,26 @@ $(BUILDDIR)/$(PACKAGE_NAME)_$(VERSION)-$(RELEASE)_all.deb: debian/control debian
 	cp -r debian $(DEBDIR)/
 	cp -r systemd $(DEBDIR)/
 	cp $(SCRIPT_SRC) $(LICENSE_FILE) Makefile $(DEBDIR)/
-	cd $(DEBDIR) && dpkg-buildpackage -us -uc -b
+	cd $(DEBDIR) && dpkg-buildpackage -us -uc
 	if [ -f $(BUILDDIR)/$(PACKAGE_NAME)_$(VERSION)-$(RELEASE)_all.deb ]; then \
 		echo "DEB package already in correct location"; \
 	else \
 		mv $(BUILDDIR)/$(PACKAGE_NAME)_$(VERSION)-$(RELEASE)_all.deb $(BUILDDIR)/; \
 	fi
+
+# Add separate target for source package
+deb-source: $(BUILDDIR)/$(PACKAGE_NAME)_$(VERSION)-$(RELEASE).dsc
+
+$(BUILDDIR)/$(PACKAGE_NAME)_$(VERSION)-$(RELEASE).dsc: debian/control debian/rules debian/install debian/changelog
+	@echo "Building DEB source package..."
+	mkdir -p $(DEBDIR)
+	cp -r debian $(DEBDIR)/
+	cp -r systemd $(DEBDIR)/
+	cp $(SCRIPT_SRC) $(LICENSE_FILE) Makefile $(DEBDIR)/
+	cd $(DEBDIR) && dpkg-buildpackage -us -uc -S
+	mv $(BUILDDIR)/$(PACKAGE_NAME)_$(VERSION)-$(RELEASE).dsc $(BUILDDIR)/
+	mv $(BUILDDIR)/$(PACKAGE_NAME)_$(VERSION)-$(RELEASE).tar.xz $(BUILDDIR)/
+	mv $(BUILDDIR)/$(PACKAGE_NAME)_$(VERSION)-$(RELEASE)_source.changes $(BUILDDIR)/
 
 clean:
 	@echo "Cleaning build artifacts..."
