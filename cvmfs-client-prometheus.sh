@@ -65,6 +65,10 @@ mountpoint_for_cvmfs_repo() {
     cvmfs_talk -i "${reponame}" mountpoint
 }
 
+mountpoint_for_cvmfs_repo_standard() {
+    echo "/cvmfs/${reponame}"
+}
+
 fqrn_for_cvmfs_repo() {
     local reponame
     reponame="$1"
@@ -130,7 +134,7 @@ get_cvmfs_repo_metrics() {
     reponame="$1"
 
     local repomountpoint
-    repomountpoint=$(mountpoint_for_cvmfs_repo "${reponame}")
+    repomountpoint=$($MOUNTPOINT_FUNCTION "${reponame}")
 
     local fqrn
     fqrn=$(fqrn_for_cvmfs_repo "${reponame}")
@@ -247,7 +251,7 @@ get_cvmfs_repo_metrics_new() {
     reponame="$1"
 
     local repomountpoint
-    repomountpoint=$(mountpoint_for_cvmfs_repo "${reponame}")
+    repomountpoint=$($MOUNTPOINT_FUNCTION "${reponame}")
 
     # Use the new "metrics prometheus" command to get most metrics
     cvmfs_talk -i "${reponame}" "metrics prometheus" >> "${TMPFILE}"
@@ -353,8 +357,10 @@ fi
 # Get repository list based on selected method
 if [[ "${USE_NON_STANDARD_MOUNTPOINTS}" == 'TRUE' ]]; then
     REPO_LIST=$(get_repos_from_cvmfs_config)
+    MOUNTPOINT_FUNCTION="mountpoint_for_cvmfs_repo"
 else
     REPO_LIST=$(get_repos_from_findmnt)
+    MOUNTPOINT_FUNCTION="mountpoint_for_cvmfs_repo_standard"
 fi
 
 for REPO in $REPO_LIST; do
