@@ -1,6 +1,6 @@
 Name:           prometheus-cvmfs-exporter
 Version:        %{version}
-Release:        %{release}%{?dist}
+Release:        %{release}
 Summary:        Prometheus exporter for CVMFS client monitoring
 
 License:        BSD-3-Clause
