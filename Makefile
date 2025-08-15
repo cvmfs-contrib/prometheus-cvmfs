@@ -4,7 +4,7 @@
 # Package information
 PACKAGE_NAME = prometheus-cvmfs-exporter
 VERSION = 1.0.0
-RELEASE = 1
+RELEASE = 2
 
 # Installation paths
 PREFIX = /usr
@@ -137,7 +137,7 @@ docker-rpm:
 	docker run --rm -it \
 	    -v $(PWD):/src \
 	    -w /src \
-	    docker.io/almalinux:9 \
+	    almalinux:9 \
 	    bash -c 'set -e; \
 	        dnf install -y rpm-build rpmdevtools make; \
 	        make rpm'
