@@ -35,6 +35,7 @@ help:
 	@echo "Available targets:"
 	@echo "  install          - Install the script to $(LIBEXECDIR), and systemd files"
 	@echo "  uninstall        - Remove installed files"
+	@echo "  check            - Check for syntax errors in $(SCRIPT_SRC)"
 	@echo "  package          - Build both RPM and DEB packages"
 	@echo "  rpm              - Build RPM package"
 	@echo "  deb              - Build DEB package"
@@ -66,6 +67,10 @@ uninstall:
 	rm -f $(DESTDIR)$(SYSTEMDDIR)/cvmfs-client-prometheus.socket
 	rm -rf $(DESTDIR)$(DOCDIR)
 	@echo "Uninstall complete"
+
+check:
+	@echo "Running syntax test for $(SCRIPT_SRC)"
+	bash -n $(SCRIPT_SRC)
 
 # Package building targets
 package: rpm deb deb-source
