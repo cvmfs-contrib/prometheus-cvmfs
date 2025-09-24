@@ -55,15 +55,12 @@ rm -f %{buildroot}%{_docdir}/%{name}/LICENSE
 make check
 
 %post
-%systemd_post cvmfs-client-prometheus@.service
 %systemd_post cvmfs-client-prometheus.socket
 
 %preun
-%systemd_preun cvmfs-client-prometheus@.service
 %systemd_preun cvmfs-client-prometheus.socket
 
 %postun
-%systemd_postun_with_restart cvmfs-client-prometheus@.service
 %systemd_postun_with_restart cvmfs-client-prometheus.socket
 
 %files
@@ -73,5 +70,7 @@ make check
 %{_unitdir}/cvmfs-client-prometheus.socket
 
 %changelog
+* Fri Aug 15 2025 Valentin Volkl <valentin.volkl@cern.ch> - 1.0.0-2
+- Only start/stop socket, not service
 * Tue Aug 12 2025 Valentin Volkl <valentin.volkl@cern.ch> - 1.0.0-1
 - Initial package release
