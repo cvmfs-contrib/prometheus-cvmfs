@@ -13,7 +13,7 @@ override_dh_auto_build:
 	# Nothing to build - this is a shell script package
 
 override_dh_auto_test:
-	# Skip tests for now
+	$(MAKE) check
 
 override_dh_install:
 	dh_install

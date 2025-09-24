@@ -51,6 +51,9 @@ make install-systemd DESTDIR=%{buildroot}
 # Remove duplicate LICENSE file from doc directory since %license handles it
 rm -f %{buildroot}%{_docdir}/%{name}/LICENSE
 
+%check
+make check
+
 %post
 %systemd_post cvmfs-client-prometheus@.service
 %systemd_post cvmfs-client-prometheus.socket
