@@ -2,6 +2,7 @@
 
 HTTP_HEADER='FALSE'
 USE_NON_STANDARD_MOUNTPOINTS='FALSE'
+EPOCHTIME=''
 
 TMPFILE=$(mktemp)
 
@@ -46,6 +47,7 @@ usage() {
     echo '' >&2
     echo '  --http: add the HTTP protocol header to the output' >&2
     echo '  --non-standard-mountpoints: use cvmfs_config status instead of findmnt to discover repositories' >&2
+    echo '  --timestamp: add a timestamp to each metric' >&2
     echo '' >&2
     echo 'NOTE: The user running this script must have read access' >&2
     echo '      to the CVMFS cache files!' >&2
@@ -608,7 +610,7 @@ for cmd in attr bc cvmfs_config cvmfs_talk grep; do
 done
 
 #############################################################
-args=$(getopt --options 'h' --longoptions 'help,http,non-standard-mountpoints' -- "$@")
+args=$(getopt --options 'h' --longoptions 'help,http,non-standard-mountpoints,timestamp' -- "$@")
 eval set -- "$args"
 
 for arg in $@; do
@@ -626,6 +628,11 @@ for arg in $@; do
     --non-standard-mountpoints)
         # Use cvmfs_config status to discover repositories
         USE_NON_STANDARD_MOUNTPOINTS='TRUE'
+        shift
+        ;;
+    --timestamp)
+        # Add metric timestamp with a leading space to simplify adding
+        EPOCHTIME=" $(date +%s)"
         shift
         ;;
     -h | --help)
@@ -663,6 +670,12 @@ done
 # Apply postprocessing for version 2.13.2 to rename metrics for consistency
 if check_cvmfs_version_exact; then
     postprocess_metrics_for_2132
+fi
+
+# Add timestamp to all metrics if requested
+if [[ -n "${EPOCHTIME}" ]]; then
+    sed "/^#/! s/\$/${EPOCHTIME}/" "${TMPFILE}" > "${TMPFILE}.time"
+    mv "${TMPFILE}.time" "${TMPFILE}"
 fi
 
 if [[ "${HTTP_HEADER}" == 'TRUE' ]]; then
