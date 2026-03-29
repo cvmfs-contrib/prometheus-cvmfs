@@ -660,8 +660,8 @@ for REPO in $REPO_LIST; do
     $METRICS_FUNCTION "${REPO}"
 done
 
-# Apply postprocessing for version 2.13.2 to rename metrics for consistency
-if check_cvmfs_version_exact; then
+# Apply postprocessing for version >= 2.13.2 to rename metrics for consistency
+if check_cvmfs_version; then
     postprocess_metrics_for_2132
 fi
 
