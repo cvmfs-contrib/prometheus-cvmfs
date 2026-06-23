@@ -22,8 +22,8 @@ declare -A CVMFS_EXTENDED_ATTRIBUTE_GAUGES=(
     ['ndiropen']='Shows the overall number of opened directories.'
     ['pid']='Shows the process id of the CernVM-FS Fuse process.'
     ['speed']='Shows the average download speed.'
-    ['useddirp']='Shows the number of file descriptors currently issued to file system clients.'
-    ['usedfd']='Shows the number of open directories currently used by file system clients.'
+    ['useddirp']='Shows the number of open directories currently used by file system clients.'
+    ['usedfd']='Shows the number of file descriptors currently issued to file system clients.'
 )
 
 # Mapping of extended attributes to new metric names
@@ -225,7 +225,7 @@ get_cvmfs_repo_metrics() {
     cvmfs_mount_rx_kb=$(attr -g rx "${repomountpoint}" | tail -n +2)
     local cvmfs_mount_rx
     cvmfs_mount_rx=$((cvmfs_mount_rx_kb * 1024))
-    generate_metric 'cvmfs_net_rx_total' 'counter' 'Shows the overall amount of downloaded bytes since mounting.' "repo=\"${fqrn}\"" "${cvmfs_mount_rx}"
+    generate_metric 'cvmfs_net_rx_bytes_total' 'counter' 'Shows the overall amount of downloaded bytes since mounting.' "repo=\"${fqrn}\"" "${cvmfs_mount_rx}"
 
     local cvmfs_mount_uptime_minutes
     cvmfs_mount_uptime_minutes=$(attr -g uptime "${repomountpoint}" | tail -n +2)
@@ -238,7 +238,7 @@ get_cvmfs_repo_metrics() {
     cvmfs_mount_uptime=$((cvmfs_mount_uptime_minutes * 60))
     cvmfs_mount_epoch_time=$((rounded_now_to_minute - cvmfs_mount_uptime))
     generate_metric 'cvmfs_repo_uptime_seconds' 'counter' 'Shows the time since the repo was mounted.' "repo=\"${fqrn}\"" "${cvmfs_mount_uptime}"
-    generate_metric 'cvmfs_repo_mount_epoch_timestamp' 'counter' 'Shows the epoch time the repo was mounted.' "repo=\"${fqrn}\"" "${cvmfs_mount_epoch_time}"
+    generate_metric 'cvmfs_repo_mount_timestamp_seconds' 'gauge' 'Shows the epoch time the repo was mounted.' "repo=\"${fqrn}\"" "${cvmfs_mount_epoch_time}"
 
     local cvmfs_repo_expires_min
     cvmfs_repo_expires_min=$(attr -g expires "${repomountpoint}" | tail -n +2)
@@ -260,15 +260,15 @@ get_cvmfs_repo_metrics() {
 
     local cvmfs_mount_timeout
     cvmfs_mount_timeout=$(attr -g timeout "${repomountpoint}" | tail -n +2)
-    generate_metric 'cvmfs_net_timeout' 'gauge' 'Shows the timeout for proxied connections in seconds.' "repo=\"${fqrn}\"" "${cvmfs_mount_timeout}"
+    generate_metric 'cvmfs_net_timeout_seconds' 'gauge' 'Shows the timeout for proxied connections in seconds.' "repo=\"${fqrn}\"" "${cvmfs_mount_timeout}"
 
     local cvmfs_mount_timeout_direct
     cvmfs_mount_timeout_direct=$(attr -g timeout_direct "${repomountpoint}" | tail -n +2)
-    generate_metric 'cvmfs_net_timeout_direct' 'gauge' 'Shows the timeout for direct connections in seconds.' "repo=\"${fqrn}\"" "${cvmfs_mount_timeout_direct}"
+    generate_metric 'cvmfs_net_timeout_direct_seconds' 'gauge' 'Shows the timeout for direct connections in seconds.' "repo=\"${fqrn}\"" "${cvmfs_mount_timeout_direct}"
 
     local cvmfs_mount_timestamp_last_ioerr
     cvmfs_mount_timestamp_last_ioerr=$(attr -g timestamp_last_ioerr "${repomountpoint}" | tail -n +2)
-    generate_metric 'cvmfs_sys_timestamp_last_ioerr' 'counter' 'Shows the timestamp of the last ioerror.' "repo=\"${fqrn}\"" "${cvmfs_mount_timestamp_last_ioerr}"
+    generate_metric 'cvmfs_sys_last_ioerr_timestamp_seconds' 'gauge' 'Shows the timestamp of the last ioerror.' "repo=\"${fqrn}\"" "${cvmfs_mount_timestamp_last_ioerr}"
 
     local cvmfs_repo_pid_statline
     cvmfs_repo_pid_statline=$(</proc/"${repo_pid}"/stat)
@@ -282,8 +282,8 @@ get_cvmfs_repo_metrics() {
     local cvmfs_system_seconds
     cvmfs_user_seconds=$(printf "%.2f" "$(echo "scale=4; $cvmfs_utime / $CLOCK_TICK" | bc)")
     cvmfs_system_seconds=$(printf "%.2f" "$(echo "scale=4; $cvmfs_stime / $CLOCK_TICK" | bc)")
-    generate_metric 'cvmfs_sys_cpu_user_total' 'counter' 'CPU time used in userspace by CVMFS mount in seconds.' "repo=\"${fqrn}\"" "${cvmfs_user_seconds}"
-    generate_metric 'cvmfs_sys_cpu_system_total' 'counter' 'CPU time used in the kernel system calls by CVMFS mount in seconds.' "repo=\"${fqrn}\"" "${cvmfs_system_seconds}"
+    generate_metric 'cvmfs_sys_cpu_user_seconds_total' 'counter' 'CPU time used in userspace by CVMFS mount in seconds.' "repo=\"${fqrn}\"" "${cvmfs_user_seconds}"
+    generate_metric 'cvmfs_sys_cpu_system_seconds_total' 'counter' 'CPU time used in the kernel system calls by CVMFS mount in seconds.' "repo=\"${fqrn}\"" "${cvmfs_system_seconds}"
 
     # Add memory usage metric
     if [[ -f "/proc/${repo_pid}/status" ]]; then
@@ -345,9 +345,11 @@ get_cvmfs_repo_metrics_new() {
         fi
     fi
 
-    # Extract PID from the metrics output and add memory usage metric
+    # Extract PID from the metrics output and add memory usage metric.
+    # CVMFS >= 2.14 emits the categorized name cvmfs_sys_pid, while 2.13.2 emits
+    # the bare cvmfs_pid (renamed later by postprocess_metrics_pre_2_14).
     local repo_pid
-    repo_pid=$(grep "cvmfs_pid{repo=\"${reponame}\"}" "${TMPFILE}" | tail -n 1 | awk '{print $2}')
+    repo_pid=$(grep -E "cvmfs_(sys_)?pid\{repo=\"${reponame}\"\}" "${TMPFILE}" | tail -n 1 | awk '{print $2}')
     if [[ -n "${repo_pid}" && -f "/proc/${repo_pid}/status" ]]; then
         local memory_usage_kb
         memory_usage_kb=$(grep "VmRSS:" "/proc/${repo_pid}/status" | awk '{print $2}')
@@ -398,8 +400,10 @@ check_cvmfs_version() {
     [ $version_num -ge $min_version_num ]
 }
 
-check_cvmfs_version_exact() {
-    # Check if cvmfs2 version is exactly 2.13.2
+check_cvmfs_version_needs_postprocess() {
+    # The "metrics prometheus" command emits bare, un-categorized metric names
+    # from its introduction in 2.13.2 up to (but not including) 2.14.0, where
+    # the categorized names became native.  Those versions need postprocessing.
     local version_output
     version_output=$(cvmfs2 --version 2>/dev/null | head -n 1)
     if [ $? -ne 0 ]; then
@@ -414,184 +418,89 @@ check_cvmfs_version_exact() {
         return 1
     fi
 
-    [ "$version" = "2.13.2" ]
+    local major minor patch
+    major=$(echo "$version" | cut -d. -f1)
+    minor=$(echo "$version" | cut -d. -f2)
+    patch=$(echo "$version" | cut -d. -f3)
+
+    local version_num=$((major * 10000000 + minor * 100000 + patch * 1000))
+    local min_version_num=$((2 * 10000000 + 13 * 100000 + 2 * 1000))  # 2.13.2
+    local max_version_num=$((2 * 10000000 + 14 * 100000 + 0 * 1000))  # 2.14.0
+
+    [ $version_num -ge $min_version_num ] && [ $version_num -lt $max_version_num ]
 }
 
-postprocess_metrics_for_2132() {
-    # Postprocess metrics for CVMFS version 2.13.2 to rename them for consistency
-    # This function only runs if cvmfs2 --version equals 2.13.2
+postprocess_metrics_pre_2_14() {
+    # CVMFS 2.13.2 .. 2.13.x emit bare, un-categorized metric names from the
+    # "metrics prometheus" command.  Rename them to the categorized names that
+    # CVMFS >= 2.14.0 emits natively so that dashboards see consistent names
+    # regardless of the client version.
+    #
+    # The substitutions are applied verbatim to every line, which covers both
+    # the "# HELP"/"# TYPE" comment lines and the metric sample lines, since the
+    # metric name appears as a plain token in all of them.  Each rename targets
+    # a full, unique metric name; the only prefix overlap (cvmfs_timeout vs
+    # cvmfs_timeout_direct) is handled by substituting the longer name first.
+    #
+    # Metrics whose semantics changed in 2.14.0 keep a distinct, version-tagged
+    # name so the two are not conflated:
+    #   - cvmfs_speed (KiB/s gauge)      vs cvmfs_net_transfer_time_seconds_total
+    #   - cvmfs_hitrate (0-100 percent)  vs cvmfs_cache_hit_ratio (0-1)
+
+    [[ -f "${TMPFILE}" ]] || return 0
 
     local tmpfile_new
     tmpfile_new=$(mktemp)
 
-    # Check if TMPFILE exists and is readable
-    if [[ ! -f "${TMPFILE}" ]]; then
-        return 0
-    fi
-
-    # Process the TMPFILE line by line to rename metrics
+    local line
     while IFS= read -r line; do
-        # Skip empty lines
-        if [[ -z "$line" ]]; then
-            echo "$line" >> "$tmpfile_new"
-            continue
-        fi
+        # Cache metrics -> cvmfs_cache_*
+        line="${line//cvmfs_cached_bytes/cvmfs_cache_cached_bytes}"
+        line="${line//cvmfs_pinned_bytes/cvmfs_cache_pinned_bytes}"
+        line="${line//cvmfs_total_cache_size_bytes/cvmfs_cache_total_size_bytes}"
+        line="${line//cvmfs_physical_cache_size_bytes/cvmfs_cache_physical_size_bytes}"
+        line="${line//cvmfs_physical_cache_avail_bytes/cvmfs_cache_physical_avail_bytes}"
+        line="${line//cvmfs_hitrate/cvmfs_cache_hitrate}"
+        line="${line//cvmfs_ncleanup24/cvmfs_cache_ncleanup24}"
 
-        # Process HELP and TYPE comments to rename metric names within them
-        if [[ "$line" =~ ^#\ (HELP|TYPE) ]]; then
-            # Apply the same renaming logic to metric names in HELP and TYPE comments
-            processed_line="$line"
+        # Network metrics -> cvmfs_net_*
+        line="${line//cvmfs_rx_total/cvmfs_net_rx_bytes_total}"
+        line="${line//cvmfs_ndownload_total/cvmfs_net_ndownload_total}"
+        line="${line//cvmfs_speed/cvmfs_net_speed}"
+        line="${line//cvmfs_active_proxy/cvmfs_net_active_proxy}"
+        line="${line//cvmfs_proxy/cvmfs_net_proxy}"
+        line="${line//cvmfs_timeout_direct/cvmfs_net_timeout_direct_seconds}"
+        line="${line//cvmfs_timeout/cvmfs_net_timeout_seconds}"
 
-            # Cache metrics - rename to cvmfs_cache_*
-            processed_line="${processed_line//cvmfs_cached_bytes/cvmfs_cache_cached_bytes}"
-            processed_line="${processed_line//cvmfs_pinned_bytes/cvmfs_cache_pinned_bytes}"
-            processed_line="${processed_line//cvmfs_total_cache_size_bytes/cvmfs_cache_total_size_bytes}"
-            processed_line="${processed_line//cvmfs_physical_cache_size_bytes/cvmfs_cache_physical_size_bytes}"
-            processed_line="${processed_line//cvmfs_physical_cache_avail_bytes/cvmfs_cache_physical_avail_bytes}"
-            processed_line="${processed_line//cvmfs_hitrate/cvmfs_cache_hitrate}"
-            processed_line="${processed_line//cvmfs_ncleanup24/cvmfs_cache_ncleanup24}"
+        # System resource metrics -> cvmfs_sys_*
+        line="${line//cvmfs_cpu_user_total/cvmfs_sys_cpu_user_seconds_total}"
+        line="${line//cvmfs_cpu_system_total/cvmfs_sys_cpu_system_seconds_total}"
+        line="${line//cvmfs_usedfd/cvmfs_sys_usedfd}"
+        line="${line//cvmfs_useddirp/cvmfs_sys_useddirp}"
+        line="${line//cvmfs_ndiropen/cvmfs_sys_ndiropen}"
+        line="${line//cvmfs_pid/cvmfs_sys_pid}"
+        line="${line//cvmfs_inode_max/cvmfs_sys_inode_max}"
+        line="${line//cvmfs_drainout_mode/cvmfs_sys_drainout_mode}"
+        line="${line//cvmfs_maintenance_mode/cvmfs_sys_maintenance_mode}"
+        line="${line//cvmfs_nfs_mode/cvmfs_sys_nfs_mode}"
+        line="${line//cvmfs_nioerr_total/cvmfs_sys_nioerr_total}"
+        line="${line//cvmfs_timestamp_last_ioerr/cvmfs_sys_last_ioerr_timestamp_seconds}"
 
-            # Network metrics - rename to cvmfs_net_*
-            processed_line="${processed_line//cvmfs_rx_total/cvmfs_net_rx_total}"
-            processed_line="${processed_line//cvmfs_ndownload_total/cvmfs_net_ndownload_total}"
-            processed_line="${processed_line//cvmfs_speed/cvmfs_net_speed}"
-            processed_line="${processed_line//cvmfs_proxy/cvmfs_net_proxy}"
-            processed_line="${processed_line//cvmfs_active_proxy/cvmfs_net_active_proxy}"
-            processed_line="${processed_line//cvmfs_timeout_direct/cvmfs_net_timeout_direct}"
-            processed_line="${processed_line//cvmfs_timeout/cvmfs_net_timeout}"
+        # Repository metrics -> cvmfs_repo_*
+        line="${line//cvmfs_nclg/cvmfs_repo_nclg}"
+        line="${line//cvmfs_uptime_seconds/cvmfs_repo_uptime_seconds}"
+        line="${line//cvmfs_mount_epoch_timestamp/cvmfs_repo_mount_timestamp_seconds}"
 
-            # System resource metrics - rename to cvmfs_sys_*
-            processed_line="${processed_line//cvmfs_cpu_user_total/cvmfs_sys_cpu_user_total}"
-            processed_line="${processed_line//cvmfs_cpu_system_total/cvmfs_sys_cpu_system_total}"
-            processed_line="${processed_line//cvmfs_usedfd/cvmfs_sys_usedfd}"
-            processed_line="${processed_line//cvmfs_useddirp/cvmfs_sys_useddirp}"
-            processed_line="${processed_line//cvmfs_ndiropen/cvmfs_sys_ndiropen}"
-            processed_line="${processed_line//cvmfs_pid/cvmfs_sys_pid}"
-            processed_line="${processed_line//cvmfs_inode_max/cvmfs_sys_inode_max}"
-            processed_line="${processed_line//cvmfs_drainout_mode/cvmfs_sys_drainout_mode}"
-            processed_line="${processed_line//cvmfs_maintenance_mode/cvmfs_sys_maintenance_mode}"
-            processed_line="${processed_line//cvmfs_nfs_mode/cvmfs_sys_nfs_mode}"
-            processed_line="${processed_line//cvmfs_nioerr_total/cvmfs_sys_nioerr_total}"
-            processed_line="${processed_line//cvmfs_timestamp_last_ioerr/cvmfs_sys_timestamp_last_ioerr}"
+        # Internal affairs metrics -> cvmfs_internal_*
+        line="${line//cvmfs_pathstring/cvmfs_internal_pathstring}"
+        line="${line//cvmfs_namestring/cvmfs_internal_namestring}"
+        line="${line//cvmfs_linkstring/cvmfs_internal_linkstring}"
+        line="${line//cvmfs_inode_tracker/cvmfs_internal_inode_tracker}"
+        line="${line//cvmfs_dentry_tracker/cvmfs_internal_dentry_tracker}"
+        line="${line//cvmfs_page_cache_tracker/cvmfs_internal_page_cache_tracker}"
+        line="${line//cvmfs_sqlite/cvmfs_internal_sqlite}"
 
-            # Repository metrics
-            processed_line="${processed_line//cvmfs_nclg/cvmfs_repo_nclg}"
-            processed_line="${processed_line//cvmfs_uptime_seconds/cvmfs_repo_uptime_seconds}"
-            processed_line="${processed_line//cvmfs_mount_epoch_timestamp/cvmfs_repo_mount_epoch_timestamp}"
-
-            # Internal affairs metrics - rename to cvmfs_internal_*
-            processed_line="${processed_line//cvmfs_pathstring/cvmfs_internal_pathstring}"
-            processed_line="${processed_line//cvmfs_namestring/cvmfs_internal_namestring}"
-            processed_line="${processed_line//cvmfs_linkstring/cvmfs_internal_linkstring}"
-            processed_line="${processed_line//cvmfs_inode_tracker/cvmfs_internal_inode_tracker}"
-            processed_line="${processed_line//cvmfs_dentry_tracker/cvmfs_internal_dentry_tracker}"
-            processed_line="${processed_line//cvmfs_page_cache_tracker/cvmfs_internal_page_cache_tracker}"
-            processed_line="${processed_line//cvmfs_sqlite/cvmfs_internal_sqlite}"
-
-            echo "$processed_line" >> "$tmpfile_new"
-            continue
-        fi
-
-        # Skip other comments
-        if [[ "$line" =~ ^# ]]; then
-            echo "$line" >> "$tmpfile_new"
-            continue
-        fi
-
-        # Cache metrics - rename to cvmfs_cache_*
-        if [[ "$line" =~ ^cvmfs_cached_bytes ]]; then
-            echo "${line/cvmfs_cached_bytes/cvmfs_cache_cached_bytes}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_pinned_bytes ]]; then
-            echo "${line/cvmfs_pinned_bytes/cvmfs_cache_pinned_bytes}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_total_cache_size_bytes ]]; then
-            echo "${line/cvmfs_total_cache_size_bytes/cvmfs_cache_total_size_bytes}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_physical_cache_size_bytes ]]; then
-            echo "${line/cvmfs_physical_cache_size_bytes/cvmfs_cache_physical_size_bytes}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_physical_cache_avail_bytes ]]; then
-            echo "${line/cvmfs_physical_cache_avail_bytes/cvmfs_cache_physical_avail_bytes}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_hitrate ]]; then
-            echo "${line/cvmfs_hitrate/cvmfs_cache_hitrate}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_ncleanup24 ]]; then
-            echo "${line/cvmfs_ncleanup24/cvmfs_cache_ncleanup24}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_cache_mode ]]; then
-            echo "${line/cvmfs_cache_mode/cvmfs_cache_mode}" >> "$tmpfile_new"
-
-        # Network metrics - rename to cvmfs_net_*
-        elif [[ "$line" =~ ^cvmfs_rx_total ]]; then
-            echo "${line/cvmfs_rx_total/cvmfs_net_rx_total}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_ndownload_total ]]; then
-            echo "${line/cvmfs_ndownload_total/cvmfs_net_ndownload_total}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_speed ]]; then
-            echo "${line/cvmfs_speed/cvmfs_net_speed}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_proxy ]]; then
-            echo "${line/cvmfs_proxy/cvmfs_net_proxy}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_active_proxy ]]; then
-            echo "${line/cvmfs_active_proxy/cvmfs_net_active_proxy}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_timeout ]]; then
-            echo "${line/cvmfs_timeout/cvmfs_net_timeout}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_timeout_direct ]]; then
-            echo "${line/cvmfs_timeout_direct/cvmfs_net_timeout_direct}" >> "$tmpfile_new"
-
-        # System resource metrics - rename to cvmfs_sys_*
-        elif [[ "$line" =~ ^cvmfs_cpu_user_total ]]; then
-            echo "${line/cvmfs_cpu_user_total/cvmfs_sys_cpu_user_total}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_cpu_system_total ]]; then
-            echo "${line/cvmfs_cpu_system_total/cvmfs_sys_cpu_system_total}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_usedfd ]]; then
-            echo "${line/cvmfs_usedfd/cvmfs_sys_usedfd}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_useddirp ]]; then
-            echo "${line/cvmfs_useddirp/cvmfs_sys_useddirp}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_ndiropen ]]; then
-            echo "${line/cvmfs_ndiropen/cvmfs_sys_ndiropen}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_pid ]]; then
-            echo "${line/cvmfs_pid/cvmfs_sys_pid}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_nclg ]]; then
-            echo "${line/cvmfs_nclg/cvmfs_repo_nclg}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_inode_max ]]; then
-            echo "${line/cvmfs_inode_max/cvmfs_sys_inode_max}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_drainout_mode ]]; then
-            echo "${line/cvmfs_drainout_mode/cvmfs_sys_drainout_mode}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_maintenance_mode ]]; then
-            echo "${line/cvmfs_maintenance_mode/cvmfs_sys_maintenance_mode}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_nfs_mode ]]; then
-            echo "${line/cvmfs_nfs_mode/cvmfs_sys_nfs_mode}" >> "$tmpfile_new"
-
-        # Repository metrics - keep cvmfs_repo_* as is
-        elif [[ "$line" =~ ^cvmfs_repo ]]; then
-            echo "$line" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_uptime_seconds ]]; then
-            echo "${line/cvmfs_uptime_seconds/cvmfs_repo_uptime_seconds}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_mount_epoch_timestamp ]]; then
-            echo "${line/cvmfs_mount_epoch_timestamp/cvmfs_repo_mount_epoch_timestamp}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_repo_expires_seconds ]]; then
-            echo "${line/cvmfs_repo_expires_seconds/cvmfs_repo_expires_seconds}" >> "$tmpfile_new"
-
-        # Error metrics
-        elif [[ "$line" =~ ^cvmfs_nioerr_total ]]; then
-            echo "${line/cvmfs_nioerr_total/cvmfs_sys_nioerr_total}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_timestamp_last_ioerr ]]; then
-            echo "${line/cvmfs_timestamp_last_ioerr/cvmfs_sys_timestamp_last_ioerr}" >> "$tmpfile_new"
-
-        # Internal affairs metrics - rename to cvmfs_internal_*
-        elif [[ "$line" =~ ^cvmfs_pathstring ]]; then
-            echo "${line/cvmfs_pathstring/cvmfs_internal_pathstring}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_namestring ]]; then
-            echo "${line/cvmfs_namestring/cvmfs_internal_namestring}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_linkstring ]]; then
-            echo "${line/cvmfs_linkstring/cvmfs_internal_linkstring}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_inode_tracker ]]; then
-            echo "${line/cvmfs_inode_tracker/cvmfs_internal_inode_tracker}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_dentry_tracker ]]; then
-            echo "${line/cvmfs_dentry_tracker/cvmfs_internal_dentry_tracker}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_page_cache_tracker ]]; then
-            echo "${line/cvmfs_page_cache_tracker/cvmfs_internal_page_cache_tracker}" >> "$tmpfile_new"
-        elif [[ "$line" =~ ^cvmfs_sqlite ]]; then
-            echo "${line/cvmfs_sqlite/cvmfs_internal_sqlite}" >> "$tmpfile_new"
-
-        # Default: keep the line as is
-        else
-            echo "$line" >> "$tmpfile_new"
-        fi
+        echo "$line" >> "$tmpfile_new"
     done < "${TMPFILE}"
 
     # Replace the original TMPFILE with the processed one
@@ -660,9 +569,10 @@ for REPO in $REPO_LIST; do
     $METRICS_FUNCTION "${REPO}"
 done
 
-# Apply postprocessing for version 2.13.2 to rename metrics for consistency
-if check_cvmfs_version_exact; then
-    postprocess_metrics_for_2132
+# Rename the bare metric names emitted by CVMFS 2.13.2 .. 2.13.x to the
+# categorized names that CVMFS >= 2.14.0 emits natively.
+if check_cvmfs_version_needs_postprocess; then
+    postprocess_metrics_pre_2_14
 fi
 
 if [[ "${HTTP_HEADER}" == 'TRUE' ]]; then
